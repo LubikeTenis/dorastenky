@@ -755,7 +755,50 @@
             // Analýza a porovnanie
             const comparisonResults = analyzeComparison();
             displayComparisonResults(comparisonResults);
+            displayAllMatches();
         }
+            const player2Surname = player2Name.split(' ')[0];
+
+    const player1Matches = findPlayerMatches(player1Name, player1Surname);
+    const player2Matches = findPlayerMatches(player2Name, player2Surname);
+
+    const combinedMatches = [...player1Matches, ...player2Matches];
+
+    combinedMatches.sort((a, b) => {
+        const dateA = new Date(a['Dátum zápasu'] || a['Dátum'] || '');
+        const dateB = new Date(b['Dátum zápasu'] || b['Dátum'] || '');
+        return dateB - dateA;
+    });
+    combinedMatches.forEach(match => {
+        const h1 = match['Hráčka 1'] || '';
+        const h2 = match['Hráčka 2'] || '';
+        const winner = match['Víťazka'] || '';
+        const score = match['Výsledok'] || '';
+        const tournament = match.tournament || '';
+        const category = match.category || '';
+
+        const winnerClass1 = winner.includes(h1.split(' ')[0]) ? 'winner' : 'loser';
+        const winnerClass2 = winner.includes(h2.split(' ')[0]) ? 'winner' : 'loser';
+
+        const matchCard = document.createElement('div');
+        matchCard.className = 'match-card';
+        matchCard.innerHTML = `
+            <div class="match-header">
+                <span class="tournament-name">${tournament} (${category})</span>
+                <span class="score">${score}</span>
+            </div>
+            <div class="match-result">
+                <span class="${winnerClass1}">${h1}</span>
+                <span style="margin: 0 10px;">vs</span>
+                <span class="${winnerClass2}">${h2}</span>
+            </div>
+        `;
+        allMatchesList.appendChild(matchCard);
+    });
+
+    document.getElementById('comparisonResults').appendChild(allMatchesDiv);
+}
+
 
         // Zobrazenie kariet hráčok
         function displayPlayerCards() {

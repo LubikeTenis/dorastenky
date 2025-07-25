@@ -105,6 +105,11 @@
             color: #2e7d32;
         }
 
+        .file-status.error {
+            background: #ffcdd2;
+            color: #c62828;
+        }
+
         .selection-section {
             background: white;
             border-radius: 15px;
@@ -434,6 +439,18 @@
             border-left: 4px solid #2196F3;
         }
 
+        .debug-info {
+            background: #f0f0f0;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
         @media (max-width: 768px) {
             .player-selectors {
                 grid-template-columns: 1fr;
@@ -481,6 +498,7 @@
                 </label>
             </div>
             <div id="fileStatus"></div>
+            <div id="debugInfo" class="debug-info" style="display: none;"></div>
             <p style="color: #666; font-size: 14px; margin-top: 15px;">
                 Súbor musí obsahovať: Sheet "Rebríček725", Sheet "Zoznam Turnajov" a turnajové sheety
             </p>
@@ -546,18 +564,34 @@
         let selectedPlayer2 = null;
         let dataLoaded = false;
 
-        // Event listeners
-        document.getElementById('fileInput').addEventListener('change', handleFileUpload);
-        document.getElementById('player1Input').addEventListener('input', (e) => handlePlayerSearch(e, 1));
-        document.getElementById('player2Input').addEventListener('input', (e) => handlePlayerSearch(e, 2));
-        document.getElementById('compareButton').addEventListener('click', compareSelectedPlayers);
-
-        // Skrytie návrhov pri kliknutí mimo
-        document.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('search-input')) {
-                document.getElementById('suggestions1').style.display = 'none';
-                document.getElementById('suggestions2').style.display = 'none';
+        // Debug funkcia
+        function debugLog(message, data = null) {
+            console.log(message, data);
+            const debugDiv = document.getElementById('debugInfo');
+            if (debugDiv) {
+                debugDiv.style.display = 'block';
+                debugDiv.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+                if (data) {
+                    debugDiv.textContent += JSON.stringify(data, null, 2) + '\n';
+                }
+                debugDiv.scrollTop = debugDiv.scrollHeight;
             }
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('fileInput').addEventListener('change', handleFileUpload);
+            document.getElementById('player1Input').addEventListener('input', (e) => handlePlayerSearch(e, 1));
+            document.getElementById('player2Input').addEventListener('input', (e) => handlePlayerSearch(e, 2));
+            document.getElementById('compareButton').addEventListener('click', compareSelectedPlayers);
+
+            // Skrytie návrhov pri kliknutí mimo
+            document.addEventListener('click', (e) => {
+                if (!e.target.classList.contains('search-input')) {
+                    document.getElementById('suggestions1').style.display = 'none';
+                    document.getElementById('suggestions2').style.display = 'none';
+                }
+            });
         });
 
         // Načítanie súboru
@@ -567,31 +601,67 @@
 
             const fileStatus = document.getElementById('fileStatus');
             fileStatus.innerHTML = '<div class="file-status">Načítavam súbor...</div>';
+            
+            debugLog(`Načítavam súbor: ${file.name}, veľkosť: ${file.size} bytes`);
 
             try {
                 const data = await file.arrayBuffer();
-                const workbook = XLSX.read(data, { type: 'array' });
+                debugLog('Súbor načítaný do pamäte');
                 
-                // Načítanie rebríčka
-                const rankingSheet = workbook.Sheets['Rebríček725'];
-                if (!rankingSheet) {
-                    throw new Error('Sheet "Rebríček725" nebol nájdený!');
+                const workbook = XLSX.read(data, { type: 'array' });
+                debugLog('Excel súbor parsovaný', workbook.SheetNames);
+                
+                // Resetovanie dát
+                allPlayers = [];
+                allMatches = [];
+                tournaments = [];
+                
+                // Kontrola existencie potrebných sheetov
+                const requiredSheets = ['Rebríček725', 'Zoznam Turnajov'];
+                const missingSheets = requiredSheets.filter(sheet => !workbook.SheetNames.includes(sheet));
+                
+                if (missingSheets.length > 0) {
+                    throw new Error(`Chýbajú sheety: ${missingSheets.join(', ')}`);
                 }
                 
+                // Načítanie rebríčka
+                debugLog('Načítavam rebríček...');
+                const rankingSheet = workbook.Sheets['Rebríček725'];
                 allPlayers = XLSX.utils.sheet_to_json(rankingSheet);
+                debugLog(`Načítaných ${allPlayers.length} hráčok`);
+                
+                // Kontrola štruktúry rebríčka
+                if (allPlayers.length > 0) {
+                    debugLog('Prvá hráčka v rebríčku:', allPlayers[0]);
+                    debugLog('Dostupné stĺpce:', Object.keys(allPlayers[0]));
+                }
                 
                 // Normalizácia názvov hráčok
-                allPlayers.forEach(player => {
-                    player.normalizedName = normalizePlayerName(player['meno a priezvisko'] || '');
+                allPlayers.forEach((player, index) => {
+                    // Skúsime nájsť správny stĺpec pre meno
+                    const nameField = player['meno a priezvisko'] || 
+                                     player['meno'] || 
+                                     player['Meno'] || 
+                                     player['Meno a priezvisko'] ||
+                                     player['Hráčka'] ||
+                                     '';
+                    if (!nameField) {
+                        debugLog(`Hráčka ${index} nemá meno:`, player);
+                    }
+                    player.normalizedName = normalizePlayerName(nameField);
+                    player.displayName = nameField; // Uložíme aj originálne meno pre zobrazenie
                 });
                 
                 // Načítanie turnajov
+                debugLog('Načítavam turnaje...');
                 const tournamentsSheet = workbook.Sheets['Zoznam Turnajov'];
-                if (!tournamentsSheet) {
-                    throw new Error('Sheet "Zoznam Turnajov" nebol nájdený!');
-                }
-                
                 tournaments = XLSX.utils.sheet_to_json(tournamentsSheet);
+                debugLog(`Načítaných ${tournaments.length} turnajov`);
+                
+                if (tournaments.length > 0) {
+                    debugLog('Prvý turnaj:', tournaments[0]);
+                    debugLog('Dostupné stĺpce turnajov:', Object.keys(tournaments[0]));
+                }
                 
                 // Mapovanie kategórií
                 const categoryMap = {};
@@ -605,19 +675,61 @@
                     }
                 });
                 
+                debugLog('Mapa kategórií:', categoryMap);
+                
                 // Načítanie všetkých zápasov
+                debugLog('Načítavam zápasy...');
                 allMatches = [];
-                workbook.SheetNames.forEach(sheetName => {
-                    if (sheetName !== 'Zoznam Turnajov' && sheetName !== 'Rebríček725') {
-                        const matches = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+                const tournamentSheets = workbook.SheetNames.filter(name => 
+                    name !== 'Zoznam Turnajov' && name !== 'Rebríček725'
+                );
+                
+                debugLog(`Nájdených ${tournamentSheets.length} turnajových sheetov:`, tournamentSheets);
+                
+                tournamentSheets.forEach((sheetName) => {
+                    try {
+                        const sheet = workbook.Sheets[sheetName];
+                        if (!sheet) {
+                            debugLog(`Sheet "${sheetName}" nie je dostupný`);
+                            return;
+                        }
+                        
+                        const matches = XLSX.utils.sheet_to_json(sheet);
+                        debugLog(`Sheet "${sheetName}": ${matches.length} záznamov`);
+                        
+                        if (matches.length > 0) {
+                            debugLog(`Prvý záznam v "${sheetName}":`, matches[0]);
+                            debugLog(`Dostupné stĺpce v "${sheetName}":`, Object.keys(matches[0]));
+                        }
                         
                         const validMatches = matches.filter(match => {
-                            return match['Hráčka 1'] && 
-                                   match['Hráčka 2'] && 
-                                   match['Hráčka 1'] !== 'BYE' && 
-                                   match['Hráčka 2'] !== 'BYE' &&
-                                   match['Víťazka'];
+                            // Skúsime rôzne možné názvy stĺpcov
+                            const player1 = match['Hráčka 1'] || 
+                                           match['Hrácka 1'] || 
+                                           match['Player 1'] || 
+                                           match['Hráč 1'] ||
+                                           '';
+                            const player2 = match['Hráčka 2'] || 
+                                           match['Hrácka 2'] || 
+                                           match['Player 2'] || 
+                                           match['Hráč 2'] ||
+                                           '';
+                            const winner = match['Víťazka'] || 
+                                          match['Vitazka'] || 
+                                          match['Winner'] || 
+                                          match['Víťaz'] ||
+                                          '';
+                            
+                            return player1 && 
+                                   player2 && 
+                                   player1 !== 'BYE' && 
+                                   player2 !== 'BYE' &&
+                                   winner &&
+                                   player1.trim().length > 0 &&
+                                   player2.trim().length > 0;
                         });
+                        
+                        debugLog(`Platných zápasov v "${sheetName}": ${validMatches.length}`);
                         
                         validMatches.forEach(match => {
                             match.tournament = sheetName;
@@ -625,10 +737,14 @@
                         });
                         
                         allMatches = allMatches.concat(validMatches);
+                    } catch (error) {
+                        debugLog(`Chyba pri načítaní sheetu "${sheetName}":`, error.message);
                     }
                 });
                 
                 dataLoaded = true;
+                
+                debugLog(`Celkovo načítaných ${allMatches.length} zápasov`);
                 
                 // Update UI
                 fileStatus.innerHTML = `
@@ -641,12 +757,11 @@
                 document.getElementById('uploadSection').classList.add('has-data');
                 document.getElementById('selectionSection').style.display = 'block';
                 
-                console.log(`Načítaných ${allPlayers.length} hráčok a ${allMatches.length} zápasov`);
-                
             } catch (error) {
                 console.error('Chyba pri načítaní súboru:', error);
+                debugLog('CHYBA:', error.message);
                 fileStatus.innerHTML = `
-                    <div class="file-status error" style="background: #ffcdd2; color: #c62828;">
+                    <div class="file-status error">
                         ✗ Chyba: ${error.message}
                     </div>
                 `;
@@ -656,7 +771,7 @@
         // Normalizácia mena
         function normalizePlayerName(name) {
             if (!name) return '';
-            let normalized = name.replace(/\(\d+\)/g, '').replace(/🌟/g, '').trim();
+            let normalized = String(name).replace(/\(\d+\)/g, '').replace(/🌟/g, '').trim();
             normalized = normalized.replace(/^(Ing\.|Mgr\.|Bc\.|PhD\.|Dr\.|JUDr\.|MUDr\.)\s*/i, '');
             return normalized.toLowerCase().trim();
         }
@@ -680,7 +795,7 @@
             const normalizedQuery = query.toLowerCase();
             
             return allPlayers.filter(player => {
-                const name = player['meno a priezvisko'] || '';
+                const name = player.displayName || '';
                 return name.toLowerCase().includes(normalizedQuery);
             }).slice(0, 10);
         }
@@ -695,13 +810,13 @@
             }
             
             suggestionsDiv.innerHTML = suggestions.map(player => {
-                const name = player['meno a priezvisko'];
-                const ranking = player['Poradie v rebríčku'];
-                const year = player['Rok narodenia'];
+                const name = player.displayName || 'Neznáme meno';
+                const ranking = player['Poradie v rebríčku'] || player['Poradie'] || '?';
+                const year = player['Rok narodenia'] || player['Rok'] || 2000;
                 const age = 2025 - year;
                 
                 return `
-                    <div class="suggestion-item" onclick="selectPlayer(${playerNumber}, '${name}')">
+                    <div class="suggestion-item" onclick="selectPlayer(${playerNumber}, '${name.replace(/'/g, "\\'")}')">
                         <strong>${name}</strong> 
                         (${ranking}. miesto, ${age} rokov)
                     </div>
@@ -719,13 +834,15 @@
             input.value = playerName;
             suggestionsDiv.style.display = 'none';
             
-            const player = allPlayers.find(p => p['meno a priezvisko'] === playerName);
+            const player = allPlayers.find(p => p.displayName === playerName);
             
             if (playerNumber === 1) {
                 selectedPlayer1 = player;
             } else {
                 selectedPlayer2 = player;
             }
+            
+            debugLog(`Vybraná hráčka ${playerNumber}:`, player);
             
             // Aktivovať tlačidlo ak sú vybrané obe hráčky
             if (selectedPlayer1 && selectedPlayer2) {
@@ -749,110 +866,136 @@
 
         // Vykonanie porovnania
         function performComparison() {
-            // Zobrazenie kariet hráčok
             displayPlayerCards();
-            
-            // Analýza a porovnanie
             const comparisonResults = analyzeComparison();
             displayComparisonResults(comparisonResults);
             displayAllMatches();
-            }
-            function displayAllMatches() {
-    const allMatchesDiv = document.createElement('div');
-    allMatchesDiv.className = 'comparison-section';
-    allMatchesDiv.innerHTML = `<h2 class="section-title">📅 Všetky zápasy oboch hráčok</h2>`;
+        }
 
-    const allMatchesList = document.createElement('div');
-    allMatchesList.className = 'direct-matches';
-
-    const player1Name = selectedPlayer1['meno a priezvisko'];
-    const player2Name = selectedPlayer2['meno a priezvisko'];
-    const player1Surname = player1Name.split(' ')[0];
-    const player2Surname = player2Name.split(' ')[0];
-
-    const player1Matches = findPlayerMatches(player1Name, player1Surname);
-    const player2Matches = findPlayerMatches(player2Name, player2Surname);
-
-    const combinedMatches = [...player1Matches, ...player2Matches];
-
-    combinedMatches.sort((a, b) => {
-        const dateA = new Date(a['Dátum zápasu'] || a['Dátum'] || '');
-        const dateB = new Date(b['Dátum zápasu'] || b['Dátum'] || '');
-        return dateB - dateA;
-    });
-
-    combinedMatches.forEach(match => {
-        const h1 = match['Hráčka 1'] || '';
-        const h2 = match['Hráčka 2'] || '';
-        const winner = match['Víťazka'] || '';
-        const score = match['Výsledok'] || '';
-        const tournament = match.tournament || '';
-        const category = match.category || '';
-
-        const winnerClass1 = winner.includes(h1.split(' ')[0]) ? 'winner' : 'loser';
-        const winnerClass2 = winner.includes(h2.split(' ')[0]) ? 'winner' : 'loser';
-
-        const matchCard = document.createElement('div');
-        matchCard.className = 'match-card';
-        matchCard.innerHTML = `
-            <div class="match-header">
-                <span class="tournament-name">${tournament} (${category})</span>
-                <span class="score">${score}</span>
-            </div>
-            <div class="match-result">
-                <span class="${winnerClass1}">${h1}</span>
-                <span style="margin: 0 10px;">vs</span>
-                <span class="${winnerClass2}">${h2}</span>
-            </div>
-        `;
-        allMatchesList.appendChild(matchCard);
-    });
-
-    allMatchesDiv.appendChild(allMatchesList);
-    document.getElementById('comparisonResults').appendChild(allMatchesDiv);
-    }
+        // Zobrazenie všetkých zápasov oboch hráčok
+        function displayAllMatches() {
+            const player1Name = selectedPlayer1.displayName;
+            const player2Name = selectedPlayer2.displayName;
+            const player1Surname = player1Name.split(' ')[0];
             const player2Surname = player2Name.split(' ')[0];
 
-    const player1Matches = findPlayerMatches(player1Name, player1Surname);
-    const player2Matches = findPlayerMatches(player2Name, player2Surname);
+            const player1Matches = findPlayerMatches(player1Name, player1Surname);
+            const player2Matches = findPlayerMatches(player2Name, player2Surname);
 
-    const combinedMatches = [...player1Matches, ...player2Matches];
+            // Kombinujeme zápasy a označíme, ktorej hráčke patria
+            const combinedMatches = [];
+            
+            player1Matches.forEach(match => {
+                combinedMatches.push({
+                    ...match,
+                    belongsTo: 'player1'
+                });
+            });
 
-    combinedMatches.sort((a, b) => {
-        const dateA = new Date(a['Dátum zápasu'] || a['Dátum'] || '');
-        const dateB = new Date(b['Dátum zápasu'] || b['Dátum'] || '');
-        return dateB - dateA;
-    });
-    combinedMatches.forEach(match => {
-        const h1 = match['Hráčka 1'] || '';
-        const h2 = match['Hráčka 2'] || '';
-        const winner = match['Víťazka'] || '';
-        const score = match['Výsledok'] || '';
-        const tournament = match.tournament || '';
-        const category = match.category || '';
+            player2Matches.forEach(match => {
+                // Kontrolujeme, či zápas už neexistuje (aby sme nemali duplikáty)
+                const exists = combinedMatches.some(existing => 
+                    existing.tournament === match.tournament &&
+                    existing['Hráčka 1'] === match['Hráčka 1'] &&
+                    existing['Hráčka 2'] === match['Hráčka 2']
+                );
+                
+                if (!exists) {
+                    combinedMatches.push({
+                        ...match,
+                        belongsTo: 'player2'
+                    });
+                }
+            });
 
-        const winnerClass1 = winner.includes(h1.split(' ')[0]) ? 'winner' : 'loser';
-        const winnerClass2 = winner.includes(h2.split(' ')[0]) ? 'winner' : 'loser';
+            // Zoradíme podľa dátumu (najnovšie prvé)
+            combinedMatches.sort((a, b) => {
+                const dateA = new Date(a['Dátum zápasu'] || a['Dátum'] || '1900-01-01');
+                const dateB = new Date(b['Dátum zápasu'] || b['Dátum'] || '1900-01-01');
+                return dateB - dateA;
+            });
 
-        const matchCard = document.createElement('div');
-        matchCard.className = 'match-card';
-        matchCard.innerHTML = `
-            <div class="match-header">
-                <span class="tournament-name">${tournament} (${category})</span>
-                <span class="score">${score}</span>
-            </div>
-            <div class="match-result">
-                <span class="${winnerClass1}">${h1}</span>
-                <span style="margin: 0 10px;">vs</span>
-                <span class="${winnerClass2}">${h2}</span>
-            </div>
-        `;
-        allMatchesList.appendChild(matchCard);
-    });
+            // Vytvoríme HTML pre sekciu všetkých zápasov
+            const allMatchesDiv = document.createElement('div');
+            allMatchesDiv.className = 'comparison-section';
+            allMatchesDiv.innerHTML = `<h2 class="section-title">📅 Všetky zápasy oboch hráčok (${combinedMatches.length})</h2>`;
 
-    document.getElementById('comparisonResults').appendChild(allMatchesDiv);
-}
+            const allMatchesList = document.createElement('div');
+            allMatchesList.className = 'direct-matches';
 
+            if (combinedMatches.length === 0) {
+                allMatchesList.innerHTML = `
+                    <p style="text-align: center; color: #666; padding: 20px;">
+                        Neboli nájdené žiadne zápasy pre tieto hráčky.
+                    </p>
+                `;
+            } else {
+                combinedMatches.forEach(match => {
+                    const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                    const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
+                    const winner = match['Víťazka'] || match['Vitazka'] || '';
+                    const score = match['Výsledok'] || match['Vysledok'] || '';
+                    const tournament = match.tournament || '';
+                    const category = match.category || '';
+                    const date = match['Dátum zápasu'] || match['Dátum'] || '';
+
+                    // Určíme, kto vyhral
+                    let winnerClass1 = '';
+                    let winnerClass2 = '';
+                    
+                    if (winner.includes(player1Surname) || winner.includes(h1.split(' ')[0])) {
+                        winnerClass1 = winner.includes(player1Surname) ? 'winner' : (h1.includes(player1Surname) ? 'winner' : 'loser');
+                        winnerClass2 = winner.includes(player2Surname) ? 'winner' : (h2.includes(player2Surname) ? 'winner' : 'loser');
+                    } else {
+                        winnerClass1 = winner.includes(h1.split(' ')[0]) ? 'winner' : 'loser';
+                        winnerClass2 = winner.includes(h2.split(' ')[0]) ? 'winner' : 'loser';
+                    }
+
+                    // Zvýrazníme naše hráčky
+                    let player1Style = '';
+                    let player2Style = '';
+                    
+                    if (h1.includes(player1Surname) || h1.includes(player2Surname)) {
+                        if (h1.includes(player1Surname)) {
+                            player1Style = 'style="background-color: rgba(102, 126, 234, 0.1); font-weight: bold;"';
+                        } else {
+                            player1Style = 'style="background-color: rgba(118, 75, 162, 0.1); font-weight: bold;"';
+                        }
+                    }
+                    
+                    if (h2.includes(player1Surname) || h2.includes(player2Surname)) {
+                        if (h2.includes(player1Surname)) {
+                            player2Style = 'style="background-color: rgba(102, 126, 234, 0.1); font-weight: bold;"';
+                        } else {
+                            player2Style = 'style="background-color: rgba(118, 75, 162, 0.1); font-weight: bold;"';
+                        }
+                    }
+
+                    const matchCard = document.createElement('div');
+                    matchCard.className = 'match-card';
+                    matchCard.innerHTML = `
+                        <div class="match-header">
+                            <span class="tournament-name">${tournament} (${category})</span>
+                            <div>
+                                ${date ? `<span style="color: #666; font-size: 12px; margin-right: 10px;">${date}</span>` : ''}
+                                <span class="score">${score}</span>
+                            </div>
+                        </div>
+                        <div class="match-result">
+                            <span class="${winnerClass1}" ${player1Style}>${h1}</span>
+                            <span style="margin: 0 10px;">vs</span>
+                            <span class="${winnerClass2}" ${player2Style}>${h2}</span>
+                        </div>
+                    `;
+                    allMatchesList.appendChild(matchCard);
+                });
+            }
+
+            allMatchesDiv.appendChild(allMatchesList);
+            
+            // Pridáme sekciu na koniec comparison results
+            document.getElementById('comparisonResults').appendChild(allMatchesDiv);
+        }
 
         // Zobrazenie kariet hráčok
         function displayPlayerCards() {
@@ -866,16 +1009,16 @@
 
         // Vytvorenie karty hráčky
         function createPlayerCard(player, className) {
-            const name = player['meno a priezvisko'];
-            const ranking = player['Poradie v rebríčku'];
-            const year = player['Rok narodenia'];
+            const name = player.displayName;
+            const ranking = player['Poradie v rebríčku'] || player['Poradie'] || '?';
+            const year = player['Rok narodenia'] || player['Rok'] || 2000;
             const age = 2025 - year;
-            const club = player['reg.'];
-            const region = player['__EMPTY'];
-            const totalPoints = player['Body Spolu'];
-            const singlesPoints = player['Body dvojhra'];
+            const club = player['reg.'] || player['Klub'] || '?';
+            const region = player['__EMPTY'] || player['Región'] || '?';
+            const totalPoints = player['Body Spolu'] || player['Body celkom'] || 0;
+            const singlesPoints = player['Body dvojhra'] || 0;
             const singlesTournaments = player['Počet turnajov dvojhra'] || 0;
-            const doublesPoints = player['Body štvorhra'];
+            const doublesPoints = player['Body štvorhra'] || 0;
             const doublesTournaments = player['Počet turnajov štvorhra'] || 0;
             
             const singlesEfficiency = singlesTournaments > 0 ? 
@@ -924,8 +1067,8 @@
 
         // Analýza porovnania
         function analyzeComparison() {
-            const player1Name = selectedPlayer1['meno a priezvisko'];
-            const player2Name = selectedPlayer2['meno a priezvisko'];
+            const player1Name = selectedPlayer1.displayName;
+            const player2Name = selectedPlayer2.displayName;
             const player1Surname = player1Name.split(' ')[0];
             const player2Surname = player2Name.split(' ')[0];
             
@@ -954,8 +1097,8 @@
         // Nájdenie zápasov hráčky
         function findPlayerMatches(playerName, playerSurname) {
             return allMatches.filter(match => {
-                const h1 = match['Hráčka 1'] || '';
-                const h2 = match['Hráčka 2'] || '';
+                const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
                 
                 return h1.includes(playerSurname) || h2.includes(playerSurname) ||
                        namesMatch(h1, playerName) || namesMatch(h2, playerName);
@@ -994,8 +1137,8 @@
         // Nájdenie priamych zápasov
         function findDirectMatches(player1Matches, player2Matches, player1Surname, player2Surname) {
             return allMatches.filter(match => {
-                const h1 = match['Hráčka 1'] || '';
-                const h2 = match['Hráčka 2'] || '';
+                const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
                 
                 return (h1.includes(player1Surname) && h2.includes(player2Surname)) ||
                        (h2.includes(player1Surname) && h1.includes(player2Surname));
@@ -1011,8 +1154,8 @@
             
             // Zbieranie súperiek hráčky 1
             player1Matches.forEach(match => {
-                const h1 = match['Hráčka 1'] || '';
-                const h2 = match['Hráčka 2'] || '';
+                const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
                 let opponent = '';
                 
                 if (h1.includes(player1Surname) || namesMatch(h1, player1Name)) {
@@ -1032,8 +1175,8 @@
             
             // Zbieranie súperiek hráčky 2
             player2Matches.forEach(match => {
-                const h1 = match['Hráčka 1'] || '';
-                const h2 = match['Hráčka 2'] || '';
+                const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
                 let opponent = '';
                 
                 if (h1.includes(player2Surname) || namesMatch(h1, player2Name)) {
@@ -1077,9 +1220,9 @@
             };
             
             matches.forEach(match => {
-                const winner = match['Víťazka'] || '';
-                const h1 = match['Hráčka 1'] || '';
-                const h2 = match['Hráčka 2'] || '';
+                const winner = match['Víťazka'] || match['Vitazka'] || '';
+                const h1 = match['Hráčka 1'] || match['Hrácka 1'] || '';
+                const h2 = match['Hráčka 2'] || match['Hrácka 2'] || '';
                 
                 let isWinner = false;
                 
@@ -1149,7 +1292,7 @@
                     <h2 class="section-title">📊 Porovnanie štatistík</h2>
                     <div class="stats-comparison">
                         <div class="stat-column player1">
-                            <h3>${selectedPlayer1['meno a priezvisko']}</h3>
+                            <h3>${selectedPlayer1.displayName}</h3>
                             <div class="stat-item">
                                 <div class="stat-value">${results.player1Stats.totalMatches}</div>
                                 <div class="stat-label">Počet zápasov</div>
@@ -1167,7 +1310,7 @@
                         <div class="vs-stat">VS</div>
                         
                         <div class="stat-column player2">
-                            <h3>${selectedPlayer2['meno a priezvisko']}</h3>
+                            <h3>${selectedPlayer2.displayName}</h3>
                             <div class="stat-item">
                                 <div class="stat-value">${results.player2Stats.totalMatches}</div>
                                 <div class="stat-label">Počet zápasov</div>
@@ -1210,9 +1353,9 @@
                         <h2 class="section-title">👶 Vekový kontext</h2>
                         <div class="age-context">
                             <p style="font-size: 16px; line-height: 1.6;">
-                                ${selectedPlayer1['meno a priezvisko']} je o <strong>${Math.abs(ageDiff)} 
+                                ${selectedPlayer1.displayName} je o <strong>${Math.abs(ageDiff)} 
                                 ${Math.abs(ageDiff) === 1 ? 'rok' : 'roky'}</strong> 
-                                ${ageDiff > 0 ? 'starší' : 'mladší'} ako ${selectedPlayer2['meno a priezvisko']}.
+                                ${ageDiff > 0 ? 'starší' : 'mladší'} ako ${selectedPlayer2.displayName}.
                                 ${ageDiff > 0 ? 
                                     'To znamená viac skúseností a fyzickú výhodu, čo je v dorasteneckom tenise významný faktor.' :
                                     'V tomto veku je to významná nevýhoda, ale zároveň ukazuje väčší potenciál do budúcnosti.'
@@ -1228,9 +1371,9 @@
 
         // Vytvorenie karty zápasu
         function createMatchCard(match) {
-            const player1Surname = selectedPlayer1['meno a priezvisko'].split(' ')[0];
-            const player2Surname = selectedPlayer2['meno a priezvisko'].split(' ')[0];
-            const winner = match['Víťazka'] || '';
+            const player1Surname = selectedPlayer1.displayName.split(' ')[0];
+            const player2Surname = selectedPlayer2.displayName.split(' ')[0];
+            const winner = match['Víťazka'] || match['Vitazka'] || '';
             
             let winner1 = false;
             let winner2 = false;
@@ -1245,12 +1388,12 @@
                 <div class="match-card">
                     <div class="match-header">
                         <span class="tournament-name">${match.tournament} (${match.category})</span>
-                        <span class="score">${match['Výsledok']}</span>
+                        <span class="score">${match['Výsledok'] || match['Vysledok'] || ''}</span>
                     </div>
                     <div class="match-result">
-                        <span class="${winner1 ? 'winner' : 'loser'}">${match['Hráčka 1']}</span>
+                        <span class="${winner1 ? 'winner' : 'loser'}">${match['Hráčka 1'] || match['Hrácka 1']}</span>
                         <span style="margin: 0 10px;">vs</span>
-                        <span class="${winner2 ? 'winner' : 'loser'}">${match['Hráčka 2']}</span>
+                        <span class="${winner2 ? 'winner' : 'loser'}">${match['Hráčka 2'] || match['Hrácka 2']}</span>
                     </div>
                 </div>
             `;
@@ -1258,15 +1401,15 @@
 
         // Vytvorenie riadku spoločnej súperky
         function createCommonOpponentRow(data) {
-            const player1Name = selectedPlayer1['meno a priezvisko'];
-            const player2Name = selectedPlayer2['meno a priezvisko'];
+            const player1Name = selectedPlayer1.displayName;
+            const player2Name = selectedPlayer2.displayName;
             const player1Surname = player1Name.split(' ')[0];
             const player2Surname = player2Name.split(' ')[0];
             
             // Výsledky hráčky 1
             let player1Wins = 0, player1Losses = 0;
             data.player1Matches.forEach(match => {
-                const winner = match['Víťazka'] || '';
+                const winner = match['Víťazka'] || match['Vitazka'] || '';
                 if (winner.includes(player1Surname)) {
                     player1Wins++;
                 } else {
@@ -1277,7 +1420,7 @@
             // Výsledky hráčky 2
             let player2Wins = 0, player2Losses = 0;
             data.player2Matches.forEach(match => {
-                const winner = match['Víťazka'] || '';
+                const winner = match['Víťazka'] || match['Vitazka'] || '';
                 if (winner.includes(player2Surname)) {
                     player2Wins++;
                 } else {
@@ -1293,13 +1436,13 @@
                         </span>
                     </div>
                     <div style="text-align: right; color: #667eea; font-weight: 600;">
-                        ${player1Name.split(' ')[1]}
+                        ${player1Name.split(' ')[1] || player1Name}
                     </div>
                     <div class="opponent-name">
                         vs ${data.opponent}
                     </div>
                     <div style="text-align: left; color: #764ba2; font-weight: 600;">
-                        ${player2Name.split(' ')[1]}
+                        ${player2Name.split(' ')[1] || player2Name}
                     </div>
                     <div class="opponent-score">
                         <span class="${player2Wins > player2Losses ? 'win-loss' : 'win-loss loss'}">

@@ -500,8 +500,17 @@
             <div id="fileStatus"></div>
             <div id="debugInfo" class="debug-info" style="display: none;"></div>
             <p style="color: #666; font-size: 14px; margin-top: 15px;">
-                Súbor musí obsahovať: Sheet "Rebríček725", Sheet "Zoznam Turnajov" a turnajové sheety
+                Súbor musí obsahovať: Sheet "Rebríček725", Sheet "Zoznam Turnajov" a turnajové sheety<br>
+                <small>💡 Dáta sa automaticky uložia a budú dostupné aj po obnovení stránky</small>
             </p>
+            
+            <!-- Tlačidlo na vymazanie uložených dát -->
+            <div style="margin-top: 15px;">
+                <button id="clearDataButton" onclick="clearStoredDataAndReset()" 
+                        style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 5px; font-size: 12px; cursor: pointer; display: none;">
+                    🗑️ Vymazať uložené dáta
+                </button>
+            </div>
         </div>
 
         <div class="selection-section" id="selectionSection">
@@ -564,6 +573,14 @@
         let selectedPlayer2 = null;
         let dataLoaded = false;
 
+        // Kľúče pre localStorage
+        const STORAGE_KEYS = {
+            players: 'tennis_app_players',
+            matches: 'tennis_app_matches',
+            tournaments: 'tennis_app_tournaments',
+            lastUpdated: 'tennis_app_last_updated'
+        };
+
         // Debug funkcia
         function debugLog(message, data = null) {
             console.log(message, data);
@@ -580,6 +597,9 @@
 
         // Event listeners
         document.addEventListener('DOMContentLoaded', function() {
+            // Pokús sa načítať uložené dáta
+            loadStoredData();
+            
             document.getElementById('fileInput').addEventListener('change', handleFileUpload);
             document.getElementById('player1Input').addEventListener('input', (e) => handlePlayerSearch(e, 1));
             document.getElementById('player2Input').addEventListener('input', (e) => handlePlayerSearch(e, 2));
@@ -593,6 +613,92 @@
                 }
             });
         });
+
+        // Načítanie uložených dát z localStorage
+        function loadStoredData() {
+            try {
+                const storedPlayers = localStorage.getItem(STORAGE_KEYS.players);
+                const storedMatches = localStorage.getItem(STORAGE_KEYS.matches);
+                const storedTournaments = localStorage.getItem(STORAGE_KEYS.tournaments);
+                const lastUpdated = localStorage.getItem(STORAGE_KEYS.lastUpdated);
+
+                if (storedPlayers && storedMatches && storedTournaments) {
+                    allPlayers = JSON.parse(storedPlayers);
+                    allMatches = JSON.parse(storedMatches);
+                    tournaments = JSON.parse(storedTournaments);
+                    dataLoaded = true;
+
+                    debugLog(`Načítané uložené dáta z ${lastUpdated}`);
+                    debugLog(`Hráčok: ${allPlayers.length}, Zápasov: ${allMatches.length}`);
+
+                    // Aktualizuj UI
+                    const fileStatus = document.getElementById('fileStatus');
+                    fileStatus.innerHTML = `
+                        <div class="file-status success">
+                            ✓ Používajú sa uložené dáta z ${formatDate(new Date(lastUpdated))}<br>
+                            Hráčok: ${allPlayers.length} | Zápasov: ${allMatches.length}<br>
+                            <small style="color: #666;">Nahrajte nový Excel súbor pre aktualizáciu dát</small>
+                        </div>
+                    `;
+                    
+                    document.getElementById('uploadSection').classList.add('has-data');
+                    document.getElementById('selectionSection').style.display = 'block';
+                    updateClearButtonVisibility();
+                } else {
+                    debugLog('Žiadne uložené dáta nenájdené');
+                }
+            } catch (error) {
+                debugLog('Chyba pri načítaní uložených dát:', error.message);
+                // Vymaž poškodené dáta
+                clearStoredData();
+            }
+        }
+
+        // Uloženie dát do localStorage
+        function saveDataToStorage() {
+            try {
+                localStorage.setItem(STORAGE_KEYS.players, JSON.stringify(allPlayers));
+                localStorage.setItem(STORAGE_KEYS.matches, JSON.stringify(allMatches));
+                localStorage.setItem(STORAGE_KEYS.tournaments, JSON.stringify(tournaments));
+                localStorage.setItem(STORAGE_KEYS.lastUpdated, new Date().toISOString());
+                
+                debugLog('Dáta úspešne uložené do localStorage');
+            } catch (error) {
+                debugLog('Chyba pri ukladaní dát:', error.message);
+                // Ak je localStorage plný, skús vymazať staré dáta a skús znova
+                if (error.name === 'QuotaExceededError') {
+                    clearStoredData();
+                    try {
+                        localStorage.setItem(STORAGE_KEYS.players, JSON.stringify(allPlayers));
+                        localStorage.setItem(STORAGE_KEYS.matches, JSON.stringify(allMatches));
+                        localStorage.setItem(STORAGE_KEYS.tournaments, JSON.stringify(tournaments));
+                        localStorage.setItem(STORAGE_KEYS.lastUpdated, new Date().toISOString());
+                        debugLog('Dáta uložené po vymazaní starých dát');
+                    } catch (retryError) {
+                        debugLog('Nepodarilo sa uložiť dáta ani po vymazaní:', retryError.message);
+                    }
+                }
+            }
+        }
+
+        // Vymazanie uložených dát
+        function clearStoredData() {
+            Object.values(STORAGE_KEYS).forEach(key => {
+                localStorage.removeItem(key);
+            });
+            debugLog('Uložené dáta vymazané');
+        }
+
+        // Formátovanie dátumu
+        function formatDate(date) {
+            return date.toLocaleDateString('sk-SK', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
 
         // Načítanie súboru
         async function handleFileUpload(event) {
@@ -746,16 +852,21 @@
                 
                 debugLog(`Celkovo načítaných ${allMatches.length} zápasov`);
                 
+                // Ulož dáta do localStorage
+                saveDataToStorage();
+                
                 // Update UI
                 fileStatus.innerHTML = `
                     <div class="file-status success">
-                        ✓ Súbor úspešne načítaný<br>
-                        Hráčok: ${allPlayers.length} | Zápasov: ${allMatches.length}
+                        ✓ Súbor úspešne načítaný a uložený<br>
+                        Hráčok: ${allPlayers.length} | Zápasov: ${allMatches.length}<br>
+                        <small style="color: #666;">Dáta sa automaticky uložili pre ďalšie použitie</small>
                     </div>
                 `;
                 
                 document.getElementById('uploadSection').classList.add('has-data');
                 document.getElementById('selectionSection').style.display = 'block';
+                updateClearButtonVisibility();
                 
             } catch (error) {
                 console.error('Chyba pri načítaní súboru:', error);
@@ -1497,6 +1608,41 @@
             setTimeout(() => {
                 errorDiv.style.display = 'none';
             }, 5000);
+        }
+
+        // Vymazanie uložených dát a reset aplikácie
+        function clearStoredDataAndReset() {
+            if (confirm('Naozaj chcete vymazať všetky uložené dáta? Budete musieť znova nahrať Excel súbor.')) {
+                clearStoredData();
+                
+                // Reset premenných
+                allPlayers = [];
+                allMatches = [];
+                tournaments = [];
+                selectedPlayer1 = null;
+                selectedPlayer2 = null;
+                dataLoaded = false;
+                
+                // Reset UI
+                document.getElementById('fileStatus').innerHTML = '';
+                document.getElementById('uploadSection').classList.remove('has-data');
+                document.getElementById('selectionSection').style.display = 'none';
+                document.getElementById('resultsSection').style.display = 'none';
+                document.getElementById('player1Input').value = '';
+                document.getElementById('player2Input').value = '';
+                document.getElementById('compareButton').disabled = true;
+                document.getElementById('clearDataButton').style.display = 'none';
+                
+                debugLog('Aplikácia resetovaná');
+            }
+        }
+        
+        // Aktualizuj viditeľnosť tlačidla na vymazanie dát
+        function updateClearButtonVisibility() {
+            const clearButton = document.getElementById('clearDataButton');
+            if (clearButton) {
+                clearButton.style.display = dataLoaded ? 'inline-block' : 'none';
+            }
         }
     </script>
 </body>
